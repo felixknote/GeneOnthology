@@ -265,12 +265,17 @@ def _pathway_class(
 
 
 # ── EcoCyc fetch stage ────────────────────────────────────────────────────────
-def _go_classify(gene: Gene, go_id: str, go_name: str, aspect: str) -> None:
-    """Route a GO annotation into the correct aspect dict and vote counter."""
+def _go_classify(gene: Gene, go_id: str, go_name: str, aspect: str, weight: int = 1) -> None:
+    """Route a GO annotation into the correct aspect dict and vote counter.
+
+    weight=1 for EcoCyc, weight=2 for UniProt.  This ensures that in a tie
+    a UniProt-annotated term (2 pts) beats an EcoCyc-only term (1 pt), while
+    a term confirmed by both sources (3 pts) always wins.
+    """
     a = aspect.lower()
     if "biological" in a or a == "p":
         gene.go_bp.setdefault(go_id, go_name)
-        gene.go_bp_votes[go_id] += 1
+        gene.go_bp_votes[go_id] += weight
     elif "molecular" in a or a == "f":
         gene.go_mf.setdefault(go_id, go_name)
     elif "cellular" in a or "component" in a or a == "c":
@@ -305,26 +310,44 @@ def fetch_ecocyc(gene: Gene) -> None:
         if gene_root is not None:
             gene.full_name = _text(gene_root, "common-name")
 
-    # GO annotations (two XML representations used by EcoCyc)
+    # GO annotations — EcoCyc uses two XML structures for the same terms.
+    # Collect into a dict first so each GO ID votes exactly once from EcoCyc.
+    # Prefer non-empty names: go-annotation often omits the name inline while
+    # the go-term element always carries common-name.
+    ecocyc_go: dict[str, tuple[str, str]] = {}  # go_id → (name, aspect)
     for ann in _findall(root, "go-annotation"):
         go_id = _text(ann, "go-id")
-        if go_id:
-            _go_classify(gene, go_id, _text(ann, "go-term", "common-name"),
-                         _text(ann, "aspect", "go-aspect"))
+        if not go_id:
+            continue
+        name   = _text(ann, "go-term", "common-name")
+        aspect = _text(ann, "aspect", "go-aspect")
+        if go_id not in ecocyc_go or not ecocyc_go[go_id][0]:
+            ecocyc_go[go_id] = (name, aspect)
     for gt in _findall(root, "go-term"):
         go_id = gt.get("frameid", "")
-        if go_id.startswith("GO:"):
-            _go_classify(gene, go_id, _text(gt, "common-name"),
-                         _text(gt, "aspect", "go-aspect"))
+        if not go_id.startswith("GO:"):
+            continue
+        name   = _text(gt, "common-name")
+        aspect = _text(gt, "aspect", "go-aspect")
+        if go_id not in ecocyc_go or not ecocyc_go[go_id][0]:
+            ecocyc_go[go_id] = (name, aspect)
+    for go_id, (go_name, aspect) in ecocyc_go.items():
+        _go_classify(gene, go_id, go_name, aspect)
 
-    # Pathway membership → ecocyc_class via super-pathway hierarchy
-    pw_frameids = [
-        child.get("frameid", "")
-        for tag in ("catalyzes", "in-pathway", "pathways")
-        for container in [_find(root, tag)] if container is not None
-        for child in container
-        if child.get("frameid", "")
-    ]
+    # Pathway membership → ecocyc_class via super-pathway hierarchy.
+    # Deduplicate: the same pathway can appear in multiple container elements
+    # (catalyzes, in-pathway, pathways); counting it twice would inflate its class.
+    seen_pw: set[str] = set()
+    pw_frameids: list[str] = []
+    for tag in ("catalyzes", "in-pathway", "pathways"):
+        container = _find(root, tag)
+        if container is None:
+            continue
+        for child in container:
+            fid = child.get("frameid", "")
+            if fid and fid not in seen_pw:
+                seen_pw.add(fid)
+                pw_frameids.append(fid)
     classes: list[str] = []
     for fid in pw_frameids[:6]:
         pw_root = _ecocyc_get(fid)
@@ -378,6 +401,9 @@ def fetch_uniprot(gene: Gene) -> None:
         rec = pd.get("recommendedName") or next(iter(pd.get("submissionNames", [{}])), {})
         gene.full_name = rec.get("fullName", {}).get("value", "") if rec else ""
 
+    # Collect UniProt GO terms into a dict before voting — the same GO ID can
+    # appear multiple times with different evidence codes; each must count once.
+    uniprot_go: dict[str, tuple[str, str]] = {}
     for xref in data.get("uniProtKBCrossReferences", []):
         db = xref.get("database", "")
         if db == "KEGG" and not gene.kegg_id:
@@ -385,8 +411,11 @@ def fetch_uniprot(gene: Gene) -> None:
         elif db == "GO":
             props = {p["key"]: p["value"] for p in xref.get("properties", [])}
             term  = props.get("GoTerm", "")
-            if len(term) >= 3:
-                _go_classify(gene, xref["id"], term[2:].strip(), term[0])
+            goid  = xref["id"]
+            if len(term) >= 3 and (goid not in uniprot_go or not uniprot_go[goid][0]):
+                uniprot_go[goid] = (term[2:].strip(), term[0])
+    for go_id, (go_name, aspect) in uniprot_go.items():
+        _go_classify(gene, go_id, go_name, aspect, weight=2)
 
 
 # ── KEGG fetch stage (tertiary) ───────────────────────────────────────────────

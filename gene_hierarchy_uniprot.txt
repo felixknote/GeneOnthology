@@ -1,0 +1,61 @@
+E. coli K-12   (28 genes, 16 groups)
+
+├── cell division
+│   ├── ftsZ    Cell division protein FtsZ
+│   ├── ftsI    Peptidoglycan D,D-transpeptidase FtsI
+│   ├── murA    UDP-N-acetylglucosamine 1-carboxyvinyltransferase
+│   └── murC    UDP-N-acetylmuramate--L-alanine ligase
+│   
+├── cytoplasmic translation
+│   ├── rpsA    Small ribosomal subunit protein bS1
+│   ├── rpsL    Small ribosomal subunit protein uS12
+│   ├── rplA    Large ribosomal subunit protein uL1
+│   └── rplC    Large ribosomal subunit protein uL3
+│   
+├── cell wall organization
+│   ├── mrdA    Peptidoglycan D,D-transpeptidase MrdA
+│   └── mrcA    Penicillin-binding protein 1A
+│   
+├── lipid A biosynthetic process
+│   ├── lpxA    Acyl-[acyl-carrier-protein]--UDP-N-acetylglucosamine O-acyltransferase
+│   └── lpxC    UDP-3-O-acyl-N-acetylglucosamine deacetylase
+│   
+├── Gram-negative-bacterium-type cell outer membrane assembly
+│   ├── lptA    Lipopolysaccharide export system protein LptA
+│   └── lptC    Lipopolysaccharide export system protein LptC
+│   
+├── DNA topological change
+│   ├── gyrA    DNA gyrase subunit A
+│   └── gyrB    DNA gyrase subunit B
+│   
+├── bacterial-type flagellum assembly
+│   ├── rpoA    DNA-directed RNA polymerase subunit alpha
+│   └── rpoB    DNA-directed RNA polymerase subunit beta
+│   
+├── intracellular protein transmembrane transport
+│   ├── secA    Protein translocase subunit SecA
+│   └── secY    Protein translocase subunit SecY
+│   
+├── cell wall repair
+│   └── mrcB    Penicillin-binding protein 1B
+│   
+├── lipid translocation
+│   └── msbA    ATP-dependent lipid A-core flippase
+│   
+├── 10-formyltetrahydrofolate biosynthetic process
+│   └── folA    Dihydrofolate reductase
+│   
+├── folic acid biosynthetic process
+│   └── folP    Dihydropteroate synthase
+│   
+├── DNA-templated DNA replication
+│   └── dnaE    DNA polymerase III subunit alpha
+│   
+├── DNA replication
+│   └── dnaB    Replicative DNA helicase DnaB
+│   
+├── chromosome segregation
+│   └── parC    DNA topoisomerase 4 subunit A
+│   
+└── chromosome organization
+    └── parE    DNA topoisomerase 4 subunit B
