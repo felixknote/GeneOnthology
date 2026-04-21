@@ -496,7 +496,7 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   # descending (specific child terms beat broad parents), then p.adjust.
   # Pre-split geneID once outside the loop for efficiency.
   all_results_full$gene_list <- strsplit(all_results_full$geneID, "/")
-  all_results_full$bg_count  <- as.integer(sub(".*/", "", all_results_full$BgRatio))
+  all_results_full$bg_count  <- as.integer(sub("/.*", "", all_results_full$BgRatio))
 
   .pick_label <- function(cl_genes, res) {
     cand <- res %>%
