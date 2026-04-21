@@ -477,10 +477,13 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   gene_clusters <- cutree(gene_hc, k = k_genes)
 
   # -- 5. Label each gene cluster with its most representative GO term ---------
-  # Specificity = n_cluster_genes / Count: fraction of the term's annotated
-  # genes that fall in this cluster. Specific terms beat broad parent terms
-  # even when the parent covers more cluster genes in absolute numbers.
-  # Tiebreak: p.adjust (most enriched wins).
+  # Sort priority:
+  #   1. BP before MF/CC — Biological Process terms are the most interpretable
+  #      labels; MF/CC are used only when no BP term covers the cluster.
+  #   2. Specificity = n_cl / Count descending — fraction of the term's
+  #      annotated genes that fall in this cluster; favours specific terms over
+  #      broad parents that happen to cover every gene.
+  #   3. p.adjust ascending — tiebreak by enrichment significance.
   cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
     cl_genes <- names(gene_clusters)[gene_clusters == cl]
     scored <- all_results %>%
@@ -489,7 +492,7 @@ run_combined <- function(ego_list, gene_df, output_dir) {
              specificity = n_cl / Count) %>%
       ungroup() %>%
       filter(n_cl > 0) %>%
-      arrange(desc(specificity), p.adjust) %>%
+      arrange(ont != "BP", desc(specificity), p.adjust) %>%
       slice(1)
     data.frame(
       cluster       = cl,
