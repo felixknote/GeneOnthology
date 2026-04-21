@@ -1,77 +1,99 @@
-# GeneOntology — E. coli Gene Classifier
+# GeneOntology — GO & KEGG Enrichment for *E. coli* K-12
 
-Fetches functional annotations for a list of *E. coli* K-12 MG1655 genes from
-three public databases and produces a hierarchy tree and an annotated Excel
-workbook. No biological information is hardcoded — only gene names.
+R pipeline for Gene Ontology (Biological Process) and KEGG pathway
+enrichment of a user-supplied gene list, with publication-ready
+hierarchical treeplots, gene–concept networks, and a single-class
+gene dendrogram. No biological information is hardcoded — only gene
+symbols.
 
 ## What it does
 
-Given a flat list of gene names in `classify_genes.py`, the script:
+Given a list of *E. coli* K-12 MG1655 gene symbols in `go_tree.R`, the
+script:
 
-1. **UniProt** — resolves accession, protein name, GO terms, and KEGG cross-reference
-2. **EcoCyc/BioCyc** — resolves protein/gene frame IDs, fetches curated GO annotations,
-   pathway memberships, pathway hierarchy, and molecular weight
-3. **KEGG** — fetches specific pathway associations
-
-Genes are grouped by the most informative level of the EcoCyc super-pathway
-hierarchy. When no pathway data is available the most-annotated GO Biological
-Process term (majority vote across EcoCyc + UniProt sources) is used as fallback.
+1. **Symbol → Entrez** via `org.EcK12.eg.db` (`clusterProfiler::bitr`)
+2. **GO:BP enrichment** with BH-adjusted p < 0.05, q < 0.2 (`enrichGO`)
+3. **Redundancy reduction** by semantic similarity ≥ 0.7 (`simplify`)
+4. **Pairwise term similarity** (Jaccard; `pairwise_termsim`)
+5. **Data-driven cluster number k** via the gap statistic
+   (Tibshirani et al. 2001) — no manual tuning
+6. **Hierarchical treeplot** of GO:BP terms (`treeplot`)
+7. **Gene–concept network** linking genes to their GO terms (`cnetplot`)
+8. **Single-class gene dendrogram** — each gene assigned to its
+   dominant GO cluster; block distance matrix guarantees the tree
+   topology mirrors GO pathway structure
+9. **KEGG pathway enrichment** (`enrichKEGG`, organism `eco`)
 
 ### Outputs
 
 | File | Contents |
 |---|---|
-| `gene_hierarchy.txt` | ASCII tree grouped by biological function |
-| `gene_classification.xlsx` | One row per gene — accession, protein name, group, EcoCyc pathways, KEGG pathways, GO terms (BP / MF / CC), molecular weight |
+| `go_treeplot.{pdf,png}` | Hierarchical dendrogram of non-redundant GO:BP terms |
+| `go_cnetplot.{pdf,png}` | Gene–concept network (gene ↔ GO term) |
+| `go_single_class.{pdf,png}` | Gene dendrogram, one pathway label per gene |
+| *(console)* | Significant KEGG pathways with GeneRatio and adjusted p |
+
+All plots are 16:9; sizes scale with the number of terms so dense
+figures don't overlap.
 
 ## Setup
 
-```bash
-pip install requests openpyxl
-```
+R ≥ 4.3 with Bioconductor. Install once:
 
-Create a `.env` file next to the script with your
-[EcoCyc](https://ecocyc.org) account credentials
-(free registration required for authenticated API access):
+```r
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
 
-```
-ECOCYC_EMAIL=you@example.com
-ECOCYC_PASSWORD=yourpassword
-```
+BiocManager::install(c(
+  "org.EcK12.eg.db",
+  "clusterProfiler",
+  "enrichplot",
+  "GOSemSim"
+))
 
-> `.env` is listed in `.gitignore` and will never be committed.
+install.packages(c(
+  "ggplot2", "dplyr", "tidyr",
+  "ggdendro", "RColorBrewer", "cluster"
+))
+```
 
 ## Usage
 
 ```bash
-python classify_genes.py
+Rscript go_tree.R
 ```
 
-The script prints per-gene progress as it runs (~5–10 min for 28 genes due to
-API rate limits). Outputs are written to the same directory as the script.
+or source `go_tree.R` from RStudio / VSCode. Plots render to the
+active graphics device and are saved alongside the script.
 
 ## Customising the gene list
 
-Edit `GENE_NAMES` at the top of `classify_genes.py`. Add or remove gene names;
-everything else — accessions, groups, colors, pathway hierarchy — is resolved
-automatically at runtime.
+Edit the `gene_names` vector at the top of `go_tree.R`:
 
-```python
-GENE_NAMES: list[str] = [
-    "ftsZ", "gyrA", "rpoB",   # add or remove genes here
-    ...
-]
+```r
+gene_names <- c(
+  "ftsZ", "gyrA", "rpoB",   # add or remove gene symbols
+  ...
+)
 ```
 
-## Data sources
+Everything downstream — enrichment, clustering, pathway labels,
+colors, plot dimensions — is resolved automatically at runtime.
 
-| Source | URL | Auth |
-|---|---|---|
-| EcoCyc / BioCyc | https://websvc.biocyc.org | Free account (Tier 1) |
-| UniProt REST | https://rest.uniprot.org | None |
-| KEGG REST | https://rest.kegg.jp | None |
+## Methods
+
+| Step | Reference |
+|---|---|
+| `clusterProfiler` 4.0 | Wu et al. (2021) *The Innovation* 2:100141 |
+| GO semantic similarity | Yu et al. (2015) *Bioinformatics* 26:976 |
+| DOSE framework | Yu et al. (2015) *Bioinformatics* 31:608 |
+| Gap statistic (k) | Tibshirani et al. (2001) *JRSS-B* 63:411 |
+| KEGG pathways | Kanehisa & Goto (2000) *Nucleic Acids Res* 28:27 |
+
+Statistical thresholds follow Bioinformatics community standards:
+BH-adjusted p < 0.05, semantic similarity ≥ 0.7, q-value < 0.2.
 
 ## Organism
 
-*Escherichia coli* K-12 MG1655 — NCBI taxonomy ID 83333, KEGG prefix `eco`,
-BioCyc database ID `ECOLI`.
+*Escherichia coli* K-12 MG1655 — NCBI taxonomy ID 83333, KEGG prefix
+`eco`, Bioconductor annotation package `org.EcK12.eg.db`.

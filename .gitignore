@@ -2,3 +2,10 @@
 *.xlsx
 __pycache__/
 *.pyc
+*.png
+*.jpg
+*.jpeg
+*.pdf
+.Rhistory
+.Rproj.user/
+.RData
