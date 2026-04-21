@@ -484,22 +484,25 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   gene_clusters <- cutree(gene_hc, k = k_genes)
 
   # -- 5. Label each gene cluster with its most representative GO term ---------
-  # Sort priority:
-  #   1. BP before MF/CC — Biological Process terms are the most interpretable
-  #      labels; MF/CC are used only when no BP term covers the cluster.
-  #   2. Specificity = n_cl / Count descending — fraction of the term's
-  #      annotated genes that fall in this cluster; favours specific terms over
-  #      broad parents that happen to cover every gene.
-  #   3. p.adjust ascending — tiebreak by enrichment significance.
+  # Specificity = n_cl / bg_count, where bg_count is the number of genes in
+  # the annotation universe annotated to that term (parsed from BgRatio "k/n").
+  # Using the universe denominator (not the input-set Count) means broad parent
+  # terms — which annotate many more universe genes — score lower than their
+  # specific children even when both cover the exact same cluster genes.
+  # This selects the boldest, most specific label possible algorithmically.
+  # Sort: specificity desc → p.adjust asc (ontology is a tiebreaker only).
+  # Pre-split geneID once to avoid O(n_terms × n_clusters) string allocations.
+  all_results_full$gene_list <- strsplit(all_results_full$geneID, "/")
+  all_results_full$bg_count  <- as.integer(sub(".*/", "", all_results_full$BgRatio))
+
   cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
     cl_genes <- names(gene_clusters)[gene_clusters == cl]
     scored <- all_results_full %>%
-      rowwise() %>%
-      mutate(n_cl        = length(intersect(strsplit(geneID, "/")[[1]], cl_genes)),
-             specificity = n_cl / Count) %>%
-      ungroup() %>%
+      mutate(n_cl        = vapply(gene_list,
+                                  function(g) length(intersect(g, cl_genes)), 0L),
+             specificity = n_cl / bg_count) %>%
       filter(n_cl > 0) %>%
-      arrange(ont != "BP", desc(specificity), p.adjust) %>%
+      arrange(desc(specificity), p.adjust, ont != "BP") %>%
       slice(1)
     data.frame(
       cluster       = cl,
