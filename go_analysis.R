@@ -83,12 +83,10 @@ if (is.null(output_base)) {
 # ---- Shared helpers ---------------------------------------------------------
 
 ont_label <- function(ont) {
-  switch(ont,
-    BP = "GO Biological Process",
-    MF = "GO Molecular Function",
-    CC = "GO Cellular Component",
-    ont
-  )
+  lut <- c(BP = "GO Biological Process",
+           MF = "GO Molecular Function",
+           CC = "GO Cellular Component")
+  ifelse(ont %in% names(lut), lut[ont], ont)
 }
 
 save_plot <- function(p, base, output_dir, w = 16, h = 11) {
