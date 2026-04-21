@@ -411,7 +411,7 @@ run_single_ont <- function(gene_df, ont, output_dir) {
   write.csv(as.data.frame(D), csv_path)
   message("  Saved: ", csv_path)
 
-  invisible(ego_s)
+  invisible(list(simplified = ego_s, full = ego))
 }
 
 
@@ -430,9 +430,16 @@ run_combined <- function(ego_list, gene_df, output_dir) {
 
   ont_names <- names(ego_list)
 
-  # -- 1. Merge all result rows -------------------------------------------------
+  # -- 1. Merge result rows -----------------------------------------------------
+  # Simplified: used for distance matrix and cnetplot (non-redundant terms).
+  # Full (unsimplified): used for cluster labeling only — simplify() removes
+  # specific terms like "peptidoglycan biosynthetic process" in favour of their
+  # parents, so we go back to the full enrichment to find precise labels.
   all_results <- bind_rows(lapply(ont_names, function(o)
-    ego_list[[o]]@result %>% mutate(ont = o)
+    ego_list[[o]]$simplified@result %>% mutate(ont = o)
+  ))
+  all_results_full <- bind_rows(lapply(ont_names, function(o)
+    ego_list[[o]]$full@result %>% mutate(ont = o)
   ))
 
   # -- 2. Gene × term binary matrix ---------------------------------------------
@@ -486,7 +493,7 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   #   3. p.adjust ascending — tiebreak by enrichment significance.
   cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
     cl_genes <- names(gene_clusters)[gene_clusters == cl]
-    scored <- all_results %>%
+    scored <- all_results_full %>%
       rowwise() %>%
       mutate(n_cl        = length(intersect(strsplit(geneID, "/")[[1]], cl_genes)),
              specificity = n_cl / Count) %>%
@@ -523,7 +530,7 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   # Inject the merged result table into a copy of the BP enrichResult so that
   # cnetplot() can render it — it only reads @result, OrgDb, and readable.
   message("Building unified combined cnetplot ...")
-  combined_ego         <- ego_list[[1]]
+  combined_ego         <- ego_list[[1]]$simplified
   combined_ego@result  <- all_results %>% select(-ont)
   n_show               <- nrow(combined_ego@result)
   set.seed(42)
