@@ -477,15 +477,19 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   gene_clusters <- cutree(gene_hc, k = k_genes)
 
   # -- 5. Label each gene cluster with its most representative GO term ---------
-  # Representative = GO term covering the most cluster genes, tiebreak: p.adjust
+  # Specificity = n_cluster_genes / Count: fraction of the term's annotated
+  # genes that fall in this cluster. Specific terms beat broad parent terms
+  # even when the parent covers more cluster genes in absolute numbers.
+  # Tiebreak: p.adjust (most enriched wins).
   cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
     cl_genes <- names(gene_clusters)[gene_clusters == cl]
     scored <- all_results %>%
       rowwise() %>%
-      mutate(n_cl = length(intersect(strsplit(geneID, "/")[[1]], cl_genes))) %>%
+      mutate(n_cl        = length(intersect(strsplit(geneID, "/")[[1]], cl_genes)),
+             specificity = n_cl / Count) %>%
       ungroup() %>%
       filter(n_cl > 0) %>%
-      arrange(desc(n_cl), p.adjust) %>%
+      arrange(desc(specificity), p.adjust) %>%
       slice(1)
     data.frame(
       cluster       = cl,
