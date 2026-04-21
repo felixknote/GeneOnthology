@@ -484,31 +484,44 @@ run_combined <- function(ego_list, gene_df, output_dir) {
   gene_clusters <- cutree(gene_hc, k = k_genes)
 
   # -- 5. Label each gene cluster with its most representative GO term ---------
-  # Specificity = n_cl / bg_count, where bg_count is the number of genes in
-  # the annotation universe annotated to that term (parsed from BgRatio "k/n").
-  # Using the universe denominator (not the input-set Count) means broad parent
-  # terms — which annotate many more universe genes — score lower than their
-  # specific children even when both cover the exact same cluster genes.
-  # This selects the boldest, most specific label possible algorithmically.
-  # Sort: specificity desc → p.adjust asc (ontology is a tiebreaker only).
-  # Pre-split geneID once to avoid O(n_terms × n_clusters) string allocations.
+  # Strategy (applied in priority order):
+  #   P1. BP terms where bg_count > n_cl — process terms that also annotate at
+  #       least one gene OUTSIDE this cluster in the universe. This excludes
+  #       incidental super-specific annotations (e.g. "response to xenobiotic
+  #       stimulus" when only the cluster's own 2 genes carry that term).
+  #   P2. Any BP term (relaxes the exclusivity filter).
+  #   P3. MF terms with bg_count > n_cl.
+  #   P4. Any remaining term.
+  # Within each priority tier: sort by universe-specificity = n_cl / bg_count
+  # descending (specific child terms beat broad parents), then p.adjust.
+  # Pre-split geneID once outside the loop for efficiency.
   all_results_full$gene_list <- strsplit(all_results_full$geneID, "/")
   all_results_full$bg_count  <- as.integer(sub(".*/", "", all_results_full$BgRatio))
 
-  cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
-    cl_genes <- names(gene_clusters)[gene_clusters == cl]
-    scored <- all_results_full %>%
+  .pick_label <- function(cl_genes, res) {
+    cand <- res %>%
       mutate(n_cl        = vapply(gene_list,
                                   function(g) length(intersect(g, cl_genes)), 0L),
              specificity = n_cl / bg_count) %>%
-      filter(n_cl > 0) %>%
-      arrange(desc(specificity), p.adjust, ont != "BP") %>%
-      slice(1)
-    data.frame(
-      cluster       = cl,
-      cluster_label = if (nrow(scored) > 0) scored$Description[1]
-                      else paste("Cluster", cl)
+      filter(n_cl > 0)
+
+    tiers <- list(
+      function(d) filter(d, ont == "BP", bg_count > n_cl),
+      function(d) filter(d, ont == "BP"),
+      function(d) filter(d, ont == "MF", bg_count > n_cl),
+      function(d) d
     )
+    for (tier in tiers) {
+      hit <- tier(cand) %>% arrange(desc(specificity), p.adjust)
+      if (nrow(hit) > 0) return(hit$Description[1])
+    }
+    paste("Cluster", cl_genes[1])
+  }
+
+  cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
+    cl_genes <- names(gene_clusters)[gene_clusters == cl]
+    data.frame(cluster       = cl,
+               cluster_label = .pick_label(cl_genes, all_results_full))
   }))
 
   gene_class <- data.frame(geneID  = names(gene_clusters),
