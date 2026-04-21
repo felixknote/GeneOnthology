@@ -416,48 +416,44 @@ run_single_ont <- function(gene_df, ont, output_dir) {
 
 
 # =============================================================================
-# run_combined()  — merge BP + MF + CC, Jaccard-only distance matrix
+# run_combined()  — merge BP + MF + CC, cluster genes by full GO profile
 # =============================================================================
 run_combined <- function(ego_list, gene_df, output_dir) {
   message("\n=== Combined (BP + MF + CC) ===")
   dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Drop ontologies that returned NULL (no significant terms)
   ego_list <- Filter(Negate(is.null), ego_list)
   if (length(ego_list) == 0) {
-    message("  No enrichment results available — skipping combined analysis.")
+    message("  No enrichment results — skipping combined.")
     return(invisible(NULL))
   }
 
   ont_names <- names(ego_list)
 
-  # -- 1. Build combined gene × term binary matrix ----------------------------
-  message("Building combined gene x term binary matrix ...")
+  # -- 1. Merge all result rows -------------------------------------------------
+  all_results <- bind_rows(lapply(ont_names, function(o)
+    ego_list[[o]]@result %>% mutate(ont = o)
+  ))
 
-  all_pairs <- lapply(ont_names, function(o) {
-    ego_s <- ego_list[[o]]
-    ego_s@result %>%
-      select(ID, geneID) %>%
-      separate_rows(geneID, sep = "/") %>%
-      mutate(ont = o)
-  })
-  all_pairs <- bind_rows(all_pairs)
+  # -- 2. Gene × term binary matrix ---------------------------------------------
+  message("Building combined gene x term binary matrix ...")
+  all_pairs <- all_results %>%
+    select(ID, geneID) %>%
+    separate_rows(geneID, sep = "/")
 
   g_all <- sort(unique(all_pairs$geneID))
-  t_all <- unique(all_pairs$ID)
+  t_all <- unique(all_results$ID)
+  n_g   <- length(g_all)
 
-  gene_term_mat <- matrix(0L, nrow = length(g_all), ncol = length(t_all),
+  gene_term_mat <- matrix(0L, nrow = n_g, ncol = length(t_all),
                           dimnames = list(g_all, t_all))
   for (i in seq_len(nrow(all_pairs)))
     gene_term_mat[all_pairs$geneID[i], all_pairs$ID[i]] <- 1L
 
-  # -- 2. Jaccard gene-gene distance ------------------------------------------
-  message("Computing Jaccard gene-gene distance matrix (", length(g_all),
-          " genes x ", length(t_all), " terms) ...")
-
-  n_g    <- length(g_all)
+  # -- 3. Jaccard gene-gene distance matrix ------------------------------------
+  message("Computing Jaccard distance matrix (", n_g, " genes × ",
+          length(t_all), " terms) ...")
   D_comb <- matrix(0, n_g, n_g, dimnames = list(g_all, g_all))
-
   for (i in seq_len(n_g))
     for (j in seq_len(i - 1L)) {
       vi <- gene_term_mat[i, ]; vj <- gene_term_mat[j, ]
@@ -465,65 +461,86 @@ run_combined <- function(ego_list, gene_df, output_dir) {
       D_comb[i, j] <- D_comb[j, i] <- if (u == 0) 1 else 1 - sum(vi & vj) / u
     }
 
-  # -- 3. Dominant ontology per gene ------------------------------------------
-  gene_ont <- all_pairs %>%
-    group_by(geneID, ont) %>%
-    summarise(n_terms = n(), .groups = "drop") %>%
-    group_by(geneID) %>%
-    arrange(desc(n_terms)) %>%
-    slice(1) %>%
-    ungroup() %>%
-    mutate(cluster       = as.integer(factor(ont, levels = ont_names)),
-           cluster_label = ont_label(ont))
+  # -- 4. Gap statistic → k gene clusters --------------------------------------
+  message("Finding optimal gene cluster count (gap statistic) ...")
+  gene_hc <- hclust(as.dist(D_comb), method = "ward.D")
+  k_max   <- min(10L, n_g - 1L)
+  set.seed(42)
+  gap <- cluster::clusGap(
+    as.matrix(D_comb),
+    FUN   = function(x, k) list(cluster = cutree(gene_hc, k)),
+    K.max = k_max, B = 50, d.power = 2
+  )
+  k_genes <- as.integer(cluster::maxSE(gap$Tab[, "gap"], gap$Tab[, "SE.sim"],
+                                        method = "Tibs2001SEmax"))
+  message("  Optimal gene cluster count: ", k_genes)
+  gene_clusters <- cutree(gene_hc, k = k_genes)
 
-  # -- 4. Gene dendrogram colored by dominant ontology -----------------------
+  # -- 5. Label each gene cluster with its most representative GO term ---------
+  # Representative = GO term covering the most cluster genes, tiebreak: p.adjust
+  cluster_labels_df <- bind_rows(lapply(sort(unique(gene_clusters)), function(cl) {
+    cl_genes <- names(gene_clusters)[gene_clusters == cl]
+    scored <- all_results %>%
+      rowwise() %>%
+      mutate(n_cl = length(intersect(strsplit(geneID, "/")[[1]], cl_genes))) %>%
+      ungroup() %>%
+      filter(n_cl > 0) %>%
+      arrange(desc(n_cl), p.adjust) %>%
+      slice(1)
+    data.frame(
+      cluster       = cl,
+      cluster_label = if (nrow(scored) > 0) scored$Description[1]
+                      else paste("Cluster", cl)
+    )
+  }))
+
+  gene_class <- data.frame(geneID  = names(gene_clusters),
+                            cluster = as.integer(gene_clusters)) %>%
+    left_join(cluster_labels_df, by = "cluster")
+
+  # -- 6. Gene dendrogram -------------------------------------------------------
   message("Building combined gene dendrogram ...")
-
-  ont_pal <- setNames(
-    RColorBrewer::brewer.pal(max(3, length(ont_names)), "Dark2")[seq_along(ont_names)],
-    seq_along(ont_names)
-  )
-
-  p_combined <- .plot_gene_dendrogram(
-    D          = D_comb,
-    gene_class = gene_ont %>% rename(geneID = geneID),
-    title_str  = "Gene dendrogram — combined GO (BP + MF + CC)",
+  p_dend <- .plot_gene_dendrogram(
+    D            = D_comb,
+    gene_class   = gene_class,
+    title_str    = "Gene dendrogram — combined GO (BP + MF + CC)",
     subtitle_str = paste0(
-      "Leaves = genes  |  Jaccard distance across all GO terms  |  ",
-      "Color = dominant ontology"
-    ),
-    palette = ont_pal
+      "Leaves = genes  |  Jaccard distance across ", length(t_all),
+      " GO terms (BP + MF + CC)  |  k = ", k_genes,
+      " gene clusters (gap statistic)"
+    )
   )
-  save_plot(p_combined, "go_single_class", output_dir, w = 32, h = 18)
+  save_plot(p_dend, "go_single_class", output_dir, w = 32, h = 18)
 
-  # -- 5. Per-ontology cnetplots (combined gene set context) ------------------
-  for (o in ont_names) {
-    message("Building cnetplot for ", ont_label(o), " ...")
-    ego_s      <- ego_list[[o]]
-    n_terms    <- nrow(ego_s@result)
-    set.seed(42)
-    p_cnet <- cnetplot(ego_s, showCategory = n_terms) +
-      labs(
-        title    = paste0("Gene-concept network — ", ont_label(o)),
-        subtitle = paste0(
-          length(g_all), " combined genes  |  ",
-          n_terms, " non-redundant terms  |  BH p.adj < 0.05"
-        )
-      ) +
-      theme(
-        plot.title    = element_text(size = 16, face = "bold"),
-        plot.subtitle = element_text(size = 11, color = "grey40")
+  # -- 7. Single unified cnetplot (all three ontologies merged) ----------------
+  # Inject the merged result table into a copy of the BP enrichResult so that
+  # cnetplot() can render it — it only reads @result, OrgDb, and readable.
+  message("Building unified combined cnetplot ...")
+  combined_ego         <- ego_list[[1]]
+  combined_ego@result  <- all_results %>% select(-ont)
+  n_show               <- nrow(combined_ego@result)
+  set.seed(42)
+  p_cnet <- cnetplot(combined_ego, showCategory = n_show) +
+    labs(
+      title    = "Gene-concept network — combined GO (BP + MF + CC)",
+      subtitle = paste0(
+        n_g, " E. coli K12 genes  |  ", n_show,
+        " non-redundant terms across BP, MF, CC  |  BH p.adj < 0.05"
       )
-    for (.i in seq_along(p_cnet$layers)) {
-      .cls <- class(p_cnet$layers[[.i]]$geom)[1]
-      if (.cls %in% c("GeomTextRepel", "GeomText", "GeomLabel", "GeomLabelRepel"))
-        p_cnet$layers[[.i]]$aes_params$size <- 6
-    }
-    rm(.i, .cls)
-    save_plot(p_cnet, paste0("go_cnetplot_", o), output_dir, w = 32, h = 18)
+    ) +
+    theme(
+      plot.title    = element_text(size = 16, face = "bold"),
+      plot.subtitle = element_text(size = 11, color = "grey40")
+    )
+  for (.i in seq_along(p_cnet$layers)) {
+    .cls <- class(p_cnet$layers[[.i]]$geom)[1]
+    if (.cls %in% c("GeomTextRepel", "GeomText", "GeomLabel", "GeomLabelRepel"))
+      p_cnet$layers[[.i]]$aes_params$size <- 5
   }
+  rm(.i, .cls)
+  save_plot(p_cnet, "go_cnetplot_combined", output_dir, w = 36, h = 20)
 
-  # -- 6. Save combined distance matrix ---------------------------------------
+  # -- 8. Save distance matrix --------------------------------------------------
   csv_path <- file.path(output_dir, "gene_distance_matrix.csv")
   write.csv(as.data.frame(D_comb), csv_path)
   message("  Saved: ", csv_path)
