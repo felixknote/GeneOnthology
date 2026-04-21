@@ -1,40 +1,65 @@
-# GeneOntology — GO & KEGG Enrichment for *E. coli* K-12
+# GeneOntology — Multi-Ontology GO Enrichment for *E. coli* K-12
 
-R pipeline for Gene Ontology (Biological Process) and KEGG pathway
-enrichment of a user-supplied gene list, with publication-ready
-hierarchical treeplots, gene–concept networks, and a single-class
-gene dendrogram. No biological information is hardcoded — only gene
-symbols.
+R pipeline for Gene Ontology enrichment across all three namespaces
+(Biological Process, Molecular Function, Cellular Component) for a
+user-supplied gene list. Produces publication-ready hierarchical
+treeplots, gene–concept networks, single-class gene dendrograms, and
+gene × gene distance matrices. No biological information is hardcoded —
+only gene symbols.
 
-## What it does
+## Scripts
 
-Given a list of *E. coli* K-12 MG1655 gene symbols in `go_tree.R`, the
-script:
-
-1. **Symbol → Entrez** via `org.EcK12.eg.db` (`clusterProfiler::bitr`)
-2. **GO:BP enrichment** with BH-adjusted p < 0.05, q < 0.2 (`enrichGO`)
-3. **Redundancy reduction** by semantic similarity ≥ 0.7 (`simplify`)
-4. **Pairwise term similarity** (Jaccard; `pairwise_termsim`)
-5. **Data-driven cluster number k** via the gap statistic
-   (Tibshirani et al. 2001) — no manual tuning
-6. **Hierarchical treeplot** of GO:BP terms (`treeplot`)
-7. **Gene–concept network** linking genes to their GO terms (`cnetplot`)
-8. **Single-class gene dendrogram** — each gene assigned to its
-   dominant GO cluster; block distance matrix guarantees the tree
-   topology mirrors GO pathway structure
-9. **KEGG pathway enrichment** (`enrichKEGG`, organism `eco`)
-
-### Outputs
-
-| File | Contents |
+| Script | Purpose |
 |---|---|
-| `go_treeplot.{pdf,png}` | Hierarchical dendrogram of non-redundant GO:BP terms |
-| `go_cnetplot.{pdf,png}` | Gene–concept network (gene ↔ GO term) |
-| `go_single_class.{pdf,png}` | Gene dendrogram, one pathway label per gene |
-| *(console)* | Significant KEGG pathways with GeneRatio and adjusted p |
+| `go_analysis.R` | **Main script** — runs BP, MF, CC separately + combined analysis |
+| `go_tree.R` | Legacy single-ontology script (BP only) |
 
-All plots are 16:9; sizes scale with the number of terms so dense
-figures don't overlap.
+---
+
+## `go_analysis.R` — Multi-Ontology Pipeline
+
+### What it does
+
+1. **Symbol → Entrez** via `org.EcK12.eg.db` (`clusterProfiler::bitr`) — once, shared
+2. **Per-ontology loop** over BP, MF, CC — each written to its own subfolder:
+   - GO enrichment with BH-adjusted p < 0.05, q < 0.2 (`enrichGO`)
+   - Redundancy reduction by semantic similarity ≥ 0.7 (`simplify`)
+   - Pairwise term similarity via Jaccard (`pairwise_termsim`)
+   - Data-driven cluster number k via the gap statistic (Tibshirani et al. 2001)
+   - Hierarchical treeplot of non-redundant GO terms (`treeplot`)
+   - Gene–concept network (`cnetplot`)
+   - Single-class gene dendrogram (block distance: Jaccard within cluster,
+     1 + semantic distance between clusters)
+   - Gene × gene distance matrix saved as CSV
+3. **Combined analysis** in `combined/` — merges all three enrichment sets:
+   - Gene × gene Jaccard distance matrix across BP + MF + CC terms
+   - Gene dendrogram colored by dominant ontology
+   - Per-ontology cnetplots in the combined context
+
+### Output folder structure
+
+```
+Gene Ontology/
+├── BP/
+│   ├── go_treeplot.{pdf,png}
+│   ├── go_cnetplot.{pdf,png}
+│   ├── go_single_class.{pdf,png}
+│   └── gene_distance_matrix.csv
+├── MF/
+│   └── … (same files)
+├── CC/
+│   └── … (same files)
+└── combined/
+    ├── go_cnetplot_BP.{pdf,png}
+    ├── go_cnetplot_MF.{pdf,png}
+    ├── go_cnetplot_CC.{pdf,png}
+    ├── go_single_class.{pdf,png}
+    └── gene_distance_matrix.csv   ← Jaccard across all GO terms
+```
+
+All plots are 16:9; treeplot height scales with term count.
+
+---
 
 ## Setup
 
@@ -60,15 +85,16 @@ install.packages(c(
 ## Usage
 
 ```bash
-Rscript go_tree.R
+Rscript go_analysis.R
 ```
 
-or source `go_tree.R` from RStudio / VSCode. Plots render to the
-active graphics device and are saved alongside the script.
+or source `go_analysis.R` from RStudio / VSCode. Subfolders are
+created automatically; plots render to the active graphics device and
+are also saved to file.
 
 ## Customising the gene list
 
-Edit the `gene_names` vector at the top of `go_tree.R`:
+Edit the `gene_names` vector at the top of `go_analysis.R`:
 
 ```r
 gene_names <- c(
@@ -80,6 +106,15 @@ gene_names <- c(
 Everything downstream — enrichment, clustering, pathway labels,
 colors, plot dimensions — is resolved automatically at runtime.
 
+## Distance matrix
+
+Each subfolder contains `gene_distance_matrix.csv` — a symmetric
+gene × gene matrix where 0 = identical GO term profile and 1 = no
+shared terms. Within the per-ontology runs the distance uses a block
+structure (Jaccard within cluster; 1 + inter-cluster semantic distance
+between clusters). The combined matrix uses pure Jaccard across the
+union of all GO terms from BP, MF, and CC.
+
 ## Methods
 
 | Step | Reference |
@@ -88,12 +123,11 @@ colors, plot dimensions — is resolved automatically at runtime.
 | GO semantic similarity | Yu et al. (2015) *Bioinformatics* 26:976 |
 | DOSE framework | Yu et al. (2015) *Bioinformatics* 31:608 |
 | Gap statistic (k) | Tibshirani et al. (2001) *JRSS-B* 63:411 |
-| KEGG pathways | Kanehisa & Goto (2000) *Nucleic Acids Res* 28:27 |
 
-Statistical thresholds follow Bioinformatics community standards:
-BH-adjusted p < 0.05, semantic similarity ≥ 0.7, q-value < 0.2.
+Statistical thresholds: BH-adjusted p < 0.05, semantic similarity ≥ 0.7,
+q-value < 0.2.
 
 ## Organism
 
-*Escherichia coli* K-12 MG1655 — NCBI taxonomy ID 83333, KEGG prefix
-`eco`, Bioconductor annotation package `org.EcK12.eg.db`.
+*Escherichia coli* K-12 MG1655 — NCBI taxonomy ID 83333,
+Bioconductor annotation package `org.EcK12.eg.db`.
